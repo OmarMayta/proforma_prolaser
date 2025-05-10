@@ -90,6 +90,8 @@ if proformas:
             st.write(f"**Descripción:** {venta['descripcion_servicio']}")
             st.write(f"**Total:** S/. {venta['total_venta']:.2f}")
             st.write(f"**Fecha:** {venta['fecha_venta']}")
+            st.markdown("---")
+            st.subheader("📝 Gastos Registrados")
             
             # --- SECCIÓN DE GASTOS DENTRO DE CADA PROFORMA ---
             st.markdown("---")
@@ -195,4 +197,3 @@ else:
                 st.rerun()
             else:
                 st.error("¡Ingresa al menos un gasto válido!")
-                h
