@@ -21,7 +21,7 @@ def total_gastos(gastos: List[Dict]) -> float:
 def utilidad(venta: float, gastos_tot: float) -> float:
     return venta - gastos_tot
 
-# — Registrar cliente —
+# — Registrar cliente (sin experimental_rerun) —
 def registrar_cliente():
     st.header("👤 Registrar Cliente")
     with st.form("form_cliente", clear_on_submit=True):
@@ -36,9 +36,8 @@ def registrar_cliente():
                     "celular": celular.strip() or None
                 }).execute()
                 st.success(f"Cliente «{nombre}» registrado.")
-                st.experimental_rerun()
 
-# — Crear proforma/venta —
+# — Crear proforma/venta (sin experimental_rerun) —
 def crear_venta():
     st.header("💼 Nueva Proforma / Venta")
     # Traer clientes
@@ -85,7 +84,7 @@ def crear_venta():
         if cpto and mto > 0:
             gastos.append({"concepto": cpto.strip(), "monto": mto})
 
-    # Botón guardar
+    # Botón guardar proforma
     if st.button("✅ Guardar Proforma"):
         if not items:
             st.error("Añade al menos un ítem con descripción y precio.")
@@ -115,7 +114,6 @@ def crear_venta():
                 }).execute()
 
             st.success(f"Proforma ID: {venta_id} guardada.")
-            st.experimental_rerun()
 
 # — Mostrar historial —
 def mostrar_historial():
