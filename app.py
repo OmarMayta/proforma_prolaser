@@ -8,12 +8,12 @@ def init_connection():
 
 supabase = init_connection()
 
-# Configuración de la página
-st.set_page_config(page_title="Proforma ProLaser", layout="wide")
+# Configuración
+st.set_page_config(layout="wide")
 st.title("📝 Proforma ProLaser")
 st.write("Creamos lo que Imaginas")
 
-# --- FUNCIONES REUTILIZABLES ---
+# --- FUNCIONES ---
 def get_clientes():
     return supabase.table("clientes").select("*").execute().data
 
@@ -23,110 +23,86 @@ def get_proformas():
 def get_gastos(id_venta):
     return supabase.table("gastos").select("*").eq("id_venta", id_venta).execute().data
 
-# --- SECCIÓN CLIENTES ---
-with st.expander("📌 Registrar Nuevo Cliente", expanded=False):
-    with st.form("form_cliente"):
-        nombre = st.text_input("Nombre del Cliente*")
-        celular = st.text_input("Celular")
-        if st.form_submit_button("Guardar Cliente"):
-            if nombre:
-                supabase.table("clientes").insert({
-                    "nombre": nombre, 
-                    "celular": celular
-                }).execute()
-                st.success("Cliente registrado!")
-                st.rerun()
-            else:
-                st.error("El nombre es obligatorio")
+# --- SECCIÓN GASTOS ---
+def mostrar_gastos(id_venta):
+    gastos = get_gastos(id_venta)
+    if gastos:
+        st.subheader("📋 Gastos Registrados")
+        total = 0
+        for gasto in gastos:
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.write(f"**{gasto['concepto']}**")
+            with col2:
+                st.write(f"S/. {gasto['monto']:.2f}")
+            total += gasto["monto"]
+        st.success(f"**Total gastado:** S/. {total:.2f}")
+    else:
+        st.warning("No hay gastos registrados")
 
-# --- SECCIÓN PROFORMAS ---
-with st.expander("💰 Crear Nueva Proforma", expanded=True):
+# --- FORMULARIO PROFORMAS ---
+with st.expander("💰 Nueva Proforma", expanded=True):
     with st.form("form_proforma"):
         # Selección de cliente
         clientes = get_clientes()
         cliente_seleccionado = st.selectbox(
-            "Seleccionar cliente existente",
+            "Cliente*",
             options=[f"{c['nombre']} ({c['celular']})" for c in clientes],
             index=0
         )
         
-        # Detalles del servicio
-        st.subheader("Detalles del Trabajo")
-        descripcion = st.text_area("Descripción*")
+        # Detalles
+        descripcion = st.text_area("Descripción del trabajo*")
         total = st.number_input("Total (S/.)*", min_value=0.0, format="%.2f")
         
         if st.form_submit_button("Guardar Proforma"):
             if descripcion and total > 0:
                 id_cliente = next(c["id_cliente"] for c in clientes if f"{c['nombre']} ({c['celular']})" == cliente_seleccionado)
-                
                 supabase.table("ventas").insert({
                     "id_cliente": id_cliente,
                     "descripcion_servicio": descripcion,
                     "total_venta": total,
                     "fecha_venta": "now()"
                 }).execute()
-                st.success("Proforma creada!")
+                st.success("¡Proforma guardada!")
                 st.rerun()
             else:
-                st.error("Descripción y total son obligatorios")
+                st.error("¡Complete los campos obligatorios!")
 
-# --- HISTORIAL CON GASTOS ---
+# --- HISTORIAL ---
 st.divider()
-st.subheader("📋 Historial de Proformas")
+st.header("Historial de Proformas")
 
 proformas = get_proformas()
-
-if not proformas:
-    st.warning("No hay proformas registradas")
-else:
+if proformas:
     for venta in proformas:
         with st.expander(f"Proforma #{venta['id_venta']} - {venta['clientes']['nombre']}"):
             # Info básica
             st.write(f"**Cliente:** {venta['clientes']['nombre']} ({venta['clientes']['celular']})")
             st.write(f"**Descripción:** {venta['descripcion_servicio']}")
             st.write(f"**Total:** S/. {venta['total_venta']:.2f}")
-            st.write(f"**Fecha:** {venta['fecha_venta']}")
             
-            # --- SECCIÓN GASTOS ---
+            # --- GASTOS ---
             st.markdown("---")
-            st.subheader("💸 Gastos Asociados")
-            
-            gastos = get_gastos(venta["id_venta"])
-            
-            if gastos:
-                total_gastos = 0
-                for gasto in gastos:
-                    col1, col2, col3 = st.columns([3, 1, 1])
-                    with col1:
-                        st.write(f"**{gasto['concepto']}**")
-                    with col2:
-                        st.write(f"S/. {gasto['monto']:.2f}")
-                    with col3:
-                        if st.button("🗑️", key=f"del_{gasto['id_gasto']}"):
-                            supabase.table("gastos").delete().eq("id_gasto", gasto["id_gasto"]).execute()
-                            st.rerun()
-                    total_gastos += gasto["monto"]
-                
-                st.success(f"**Total gastado:** S/. {total_gastos:.2f}")
-                st.metric("💰 Utilidad estimada", f"S/. {venta['total_venta'] - total_gastos:.2f}")
-            else:
-                st.warning("No hay gastos registrados")
+            mostrar_gastos(venta["id_venta"])
             
             # Formulario para nuevos gastos
-            with st.form(f"form_nuevo_gasto_{venta['id_venta']}"):
-                st.write("**Agregar nuevo gasto**")
-                concepto = st.text_input("Concepto*", key=f"concepto_{venta['id_venta']}")
-                monto = st.number_input("Monto (S/.)*", min_value=0.0, format="%.2f", key=f"monto_{venta['id_venta']}")
+            with st.form(f"nuevo_gasto_{venta['id_venta']}"):
+                concepto = st.text_input("Concepto*", key=f"c_{venta['id_venta']}")
+                monto = st.number_input("Monto*", min_value=0.0, format="%.2f", key=f"m_{venta['id_venta']}")
                 
-                if st.form_submit_button("Guardar Gasto"):
+                if st.form_submit_button("➕ Agregar Gasto"):
                     if concepto and monto > 0:
                         supabase.table("gastos").insert({
                             "id_venta": venta["id_venta"],
                             "concepto": concepto,
-                            "monto": monto
+                            "monto": monto,
+                            "fecha_gasto": "now()"
                         }).execute()
-                        st.success("Gasto registrado!")
+                        st.success("¡Gasto registrado!")
                         st.rerun()
                     else:
-                        st.error("Concepto y monto son obligatorios")
-                        
+                        st.error("¡Complete los campos!")
+else:
+    st.warning("No hay proformas registradas")
+    
