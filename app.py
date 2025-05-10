@@ -8,7 +8,7 @@ logging.basicConfig(level=logging.DEBUG)
 st.set_page_config(page_title="ProLaser: Sistema Contable", layout="wide")
 st.title("🧾 ProLaser – Sistema Contable")
 
-# Inicializar variables de sesión
+# Inicialización segura del estado de sesión
 if 'items' not in st.session_state:
     st.session_state.items = [{"desc": "", "precio": 0.0, "cantidad": 1}]
 
@@ -41,7 +41,7 @@ def registrar_cliente():
             celular = cols[3].text_input("Celular* (9 dígitos)", max_chars=9)
             
             cols2 = st.columns([3, 3])
-            distrito = cols2[0].text_input("Distrito/Provincia")  # Cambiado a text_input
+            distrito = cols2[0].text_input("Distrito/Provincia")
             direccion = cols2[1].text_input("Dirección")
             
             instalacion = st.checkbox("Requiere servicio de instalación")
@@ -65,8 +65,8 @@ def registrar_cliente():
                     try:
                         cliente_data = {
                             "nombre": nombre.strip(),
-                            "dni": dni if dni else None,
-                            "ruc": ruc if ruc else None,
+                            "dni": dni or None,
+                            "ruc": ruc or None,
                             "celular": celular,
                             "distrito": distrito.strip(),
                             "direccion": direccion.strip(),
@@ -101,15 +101,11 @@ def crear_venta():
         
         st.subheader("📦 Productos/Servicios")
         
-        # Asegurar que items siempre es una lista
-        if not isinstance(st.session_state.items, list):
+        # Validación robusta de items
+        if not isinstance(st.session_state.items, list) or len(st.session_state.items) == 0:
             st.session_state.items = [{"desc": "", "precio": 0.0, "cantidad": 1}]
             
-        # Crear nuevos items si la lista está vacía
-        if len(st.session_state.items) == 0:
-            st.session_state.items.append({"desc": "", "precio": 0.0, "cantidad": 1})
-            
-        for i, item in enumerate(st.session_state.items):
+        for i in range(len(st.session_state.items)):
             cols = st.columns([4,1,1,2])
             with cols[0]:
                 desc = st.text_input(f"Descripción {i+1}", key=f"desc_{i}")
@@ -120,7 +116,11 @@ def crear_venta():
             with cols[3]:
                 st.write(f"Subtotal: S/{(precio * cantidad):.2f}")
             
-            st.session_state.items[i] = {"desc": desc, "precio": precio, "cantidad": cantidad}
+            st.session_state.items[i] = {
+                "desc": desc,
+                "precio": precio,
+                "cantidad": cantidad
+            }
         
         c1, c2 = st.columns([1,4])
         if c1.button("➕ Añadir Ítem"):
@@ -129,7 +129,11 @@ def crear_venta():
         total_venta = sum(item['precio'] * item['cantidad'] for item in st.session_state.items)
         
         st.subheader("💰 Gestión de Pagos")
-        adelanto = st.number_input("Adelanto Recibido", min_value=0.0, max_value=float(total_venta), value=0.0)
+        adelanto = st.number_input("Adelanto Recibido", 
+                                  min_value=0.0, 
+                                  max_value=float(total_venta), 
+                                  value=0.0,
+                                  format="%.2f")
         saldo = total_venta - adelanto
         st.write(f"**Saldo Pendiente:** S/ {saldo:.2f}")
         
@@ -138,7 +142,7 @@ def crear_venta():
         if st.button("💾 Guardar Operación"):
             try:
                 if total_venta <= 0:
-                    raise ValueError("El total de venta debe ser mayor a 0")
+                    raise ValueError("Debe agregar al menos un ítem válido")
                 
                 venta_data = {
                     "cliente_id": cliente_opts[cliente_selec],
@@ -151,7 +155,7 @@ def crear_venta():
                 venta = supabase.table("ventas").insert(venta_data).execute().data[0]
                 
                 for item in st.session_state.items:
-                    if item['desc'].strip():  # Solo guardar items con descripción
+                    if item['desc'].strip():
                         item_data = {
                             "venta_id": venta['id'],
                             "descripcion": item['desc'],
@@ -161,13 +165,78 @@ def crear_venta():
                         supabase.table("items_venta").insert(item_data).execute()
                 
                 st.success(f"Operación {tipo_doc.capitalize()} #{venta['id']} guardada!")
-                # Resetear manteniendo la estructura correcta
                 st.session_state.items = [{"desc": "", "precio": 0.0, "cantidad": 1}]
                 
             except Exception as e:
                 st.error(f"Error al guardar: {str(e)}")
 
-# Resto del código de mostrar_historial() se mantiene igual...
+# Historial y gestión de gastos
+def mostrar_historial():
+    with st.expander("📚 Historial y Gestión", expanded=True):
+        try:
+            ventas = supabase.table("ventas").select("*, cliente:clientes(*), items_venta(*), gastos(*)").execute().data
+        except Exception as e:
+            st.error(f"Error al cargar historial: {str(e)}")
+            return
+            
+        st.subheader("📊 Estado Financiero")
+        col1, col2, col3 = st.columns(3)
+        total_ventas = sum(Decimal(v['total_venta']) for v in ventas)
+        total_adelantos = sum(Decimal(v['adelanto']) for v in ventas)
+        col1.metric("Ventas Totales", f"S/ {total_ventas:.2f}")
+        col2.metric("En Caja", f"S/ {total_adelantos:.2f}")
+        col3.metric("Por Cobrar", f"S/ {total_ventas - total_adelantos:.2f}")
+        
+        st.subheader("📋 Detalle de Operaciones")
+        for venta in ventas:
+            with st.container():
+                cols = st.columns([1,3,2,2])
+                cols[0].write(f"**ID:** {venta['id']}")
+                cols[1].write(f"**Cliente:** {venta['cliente']['nombre']}")
+                cols[2].write(f"**Total:** S/ {venta['total_venta']:.2f}")
+                cols[3].write(f"**Saldo:** S/ {Decimal(venta['total_venta']) - Decimal(venta['adelanto']):.2f}")
+                
+                with st.expander("Ver detalles completos"):
+                    with st.form(f"editar_venta_{venta['id']}"):
+                        nuevo_adelanto = st.number_input("Modificar Adelanto", 
+                                                        value=float(venta['adelanto']), 
+                                                        max_value=float(venta['total_venta']),
+                                                        format="%.2f")
+                        if st.form_submit_button("Actualizar Adelanto"):
+                            try:
+                                supabase.table("ventas").update({
+                                    "adelanto": Decimal(nuevo_adelanto).quantize(Decimal('0.00'))
+                                }).eq("id", venta['id']).execute()
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error al actualizar: {str(e)}")
+                    
+                    st.write("**Gastos Asociados:**")
+                    gastos = venta['gastos']
+                    for gasto in gastos:
+                        cols = st.columns([3,1,1])
+                        cols[0].write(gasto['concepto'])
+                        cols[1].write(f"S/ {gasto['monto']:.2f}")
+                        if cols[2].button("🗑️", key=f"del_gasto_{gasto['id']}"):
+                            try:
+                                supabase.table("gastos").delete().eq("id", gasto['id']).execute()
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error al eliminar: {str(e)}")
+                    
+                    with st.form(f"nuevo_gasto_{venta['id']}"):
+                        concepto = st.text_input("Concepto del Gasto")
+                        monto = st.number_input("Monto", min_value=0.0, format="%.2f")
+                        if st.form_submit_button("➕ Añadir Gasto"):
+                            try:
+                                supabase.table("gastos").insert({
+                                    "venta_id": venta['id'],
+                                    "concepto": concepto,
+                                    "monto": Decimal(monto).quantize(Decimal('0.00'))
+                                }).execute()
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error al guardar gasto: {str(e)}")
 
 # Ejecutar la aplicación
 if supabase:
