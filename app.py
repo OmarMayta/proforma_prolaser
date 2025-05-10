@@ -2,7 +2,7 @@ import streamlit as st
 from supabase import create_client
 
 # Conexión a Supabase (ahora seguro con st.secrets)
-supabase = create_client(st.secrets["https://tauotlaoucenrazzannc.supabase.co"], st.secrets["eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRhdW90bGFvdWNlbnJhenphbm5jIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDY4OTE2MzMsImV4cCI6MjA2MjQ2NzYzM30.bq5fHRB7znU9bZsgrhA9ZvdKzg912OHvxytor-h2kWM"])
+supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 
 st.title("📝 Proforma Laser e Imprenta")
 st.write("**App Online conectada a Supabase!**")
