@@ -1,6 +1,5 @@
 import streamlit as st
 from supabase import create_client, Client
-from datetime import datetime
 from decimal import Decimal
 import logging
 
@@ -8,6 +7,12 @@ import logging
 logging.basicConfig(level=logging.DEBUG)
 st.set_page_config(page_title="ProLaser: Sistema Contable", layout="wide")
 st.title("🧾 ProLaser – Sistema Contable")
+
+# Inicializar variables de sesión
+if 'items' not in st.session_state:
+    st.session_state.items = [{"desc": "", "precio": 0.0, "cantidad": 1}]
+if 'n_gastos' not in st.session_state:
+    st.session_state.n_gastos = 0
 
 # Conexión a Supabase
 @st.cache_resource
@@ -97,6 +102,8 @@ def crear_venta():
         tipo_doc = st.radio("Tipo de documento", ["proforma", "contrato"], horizontal=True)
         
         st.subheader("📦 Productos/Servicios")
+        
+        # Asegurarse que items está inicializado
         if 'items' not in st.session_state:
             st.session_state.items = [{"desc": "", "precio": 0.0, "cantidad": 1}]
         
@@ -142,16 +149,17 @@ def crear_venta():
                 venta = supabase.table("ventas").insert(venta_data).execute().data[0]
                 
                 for item in st.session_state.items:
-                    item_data = {
-                        "venta_id": venta['id'],
-                        "descripcion": item['desc'],
-                        "precio_unitario": Decimal(item['precio']).quantize(Decimal('0.00')),
-                        "cantidad": item['cantidad']
-                    }
-                    supabase.table("items_venta").insert(item_data).execute()
+                    if item['desc']:  # Solo guardar items con descripción
+                        item_data = {
+                            "venta_id": venta['id'],
+                            "descripcion": item['desc'],
+                            "precio_unitario": Decimal(item['precio']).quantize(Decimal('0.00')),
+                            "cantidad": item['cantidad']
+                        }
+                        supabase.table("items_venta").insert(item_data).execute()
                 
                 st.success(f"Operación {tipo_doc.capitalize()} #{venta['id']} guardada!")
-                st.session_state.items = []
+                st.session_state.items = [{"desc": "", "precio": 0.0, "cantidad": 1}]  # Resetear a un item vacío
                 
             except Exception as e:
                 st.error(f"Error al guardar: {str(e)}")
