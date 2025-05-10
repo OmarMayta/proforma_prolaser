@@ -1,165 +1,164 @@
 import streamlit as st
 from supabase import create_client, Client
 from typing import List, Dict
-from uuid import UUID
 
-# --- Inicialización Supabase ---
+# — Conexión a Supabase —
 @st.cache_resource(show_spinner=False)
-def get_supabase() -> Client:
+def init_supabase() -> Client:
     url = st.secrets["SUPABASE_URL"]
     key = st.secrets["SUPABASE_KEY"]
     return create_client(url, key)
 
-supabase = get_supabase()
+supabase = init_supabase()
 
-# --- Helpers contables ---
-def calc_items_total(items: List[Dict]) -> float:
-    return sum(item["unit_price"] * item["quantity"] for item in items)
+# — Funciones contables —
+def total_items(items: List[Dict]) -> float:
+    return sum(it["precio_unitario"] * it["cantidad"] for it in items)
 
-def calc_expenses_total(expenses: List[Dict]) -> float:
-    return sum(e["amount"] for e in expenses)
+def total_gastos(gastos: List[Dict]) -> float:
+    return sum(g["monto"] for g in gastos)
 
-def calc_profit(sale_total: float, expenses_total: float) -> float:
-    return sale_total - expenses_total
+def utilidad(venta: float, gastos_tot: float) -> float:
+    return venta - gastos_tot
 
-# --- UI: Registrar Cliente ---
-def register_customer():
+# — Registrar cliente —
+def registrar_cliente():
     st.header("👤 Registrar Cliente")
-    with st.form("form_customer", clear_on_submit=True):
-        name  = st.text_input("Nombre completo", max_chars=100)
-        phone = st.text_input("Celular / Teléfono")
-        if st.form_submit_button("Guardar Cliente"):
-            if not name.strip():
+    with st.form("form_cliente", clear_on_submit=True):
+        nombre  = st.text_input("Nombre completo")
+        celular = st.text_input("Celular")
+        if st.form_submit_button("Guardar"):
+            if not nombre.strip():
                 st.error("El nombre es obligatorio.")
             else:
-                supabase.table("customers").insert({
-                    "name": name.strip(),
-                    "phone": phone.strip() or None
+                supabase.table("clientes").insert({
+                    "nombre": nombre.strip(),
+                    "celular": celular.strip() or None
                 }).execute()
-                st.success(f"Cliente «{name}» registrado.")
+                st.success(f"Cliente «{nombre}» registrado.")
                 st.experimental_rerun()
 
-# --- UI: Crear Proforma/Venta ---
-def create_sale():
+# — Crear proforma/venta —
+def crear_venta():
     st.header("💼 Nueva Proforma / Venta")
-    # Carga de clientes
-    res = supabase.table("customers").select("*").order("created_at", desc=True).execute()
-    customers = res.data or []
-    if not customers:
-        st.warning("No hay clientes. Registra uno primero.")
+    # Traer clientes
+    resp = supabase.table("clientes").select("*").order("fecha_creacion", desc=True).execute()
+    clientes = resp.data or []
+    if not clientes:
+        st.warning("Registra al menos un cliente primero.")
         return
 
-    # Selección de cliente
-    cust_map = {f"{c['name']} — {c.get('phone','') or '—'}": c["id"] for c in customers}
-    cust_choice = st.selectbox("Selecciona Cliente", list(cust_map.keys()))
+    # Mapa nombre→id
+    opts = {f"{c['nombre']} ({c.get('celular') or '—'})": c["id"] for c in clientes}
+    elegido = st.selectbox("Selecciona Cliente", list(opts.keys()))
 
-    # Dinámica de items
-    if "n_items" not in st.session_state:
-        st.session_state.n_items = 1
+    # Ítems de servicio/producto
+    if "n_items" not in st.session_state: st.session_state.n_items = 1
     if st.button("➕ Añadir ítem"):
         st.session_state.n_items += 1
 
     items: List[Dict] = []
-    st.markdown("**Detalle de Servicios / Productos**")
-    for idx in range(st.session_state.n_items):
-        cols = st.columns([4, 1, 1])
-        desc  = cols[0].text_input(f"Descripción ítem #{idx+1}", key=f"desc_{idx}")
-        price = cols[1].number_input(f"Precio S/.", min_value=0.0, format="%.2f", key=f"price_{idx}")
-        qty   = cols[2].number_input(f"Qty", min_value=1, step=1, key=f"qty_{idx}")
-        if desc and price > 0:
+    st.subheader("Detalle de ítems")
+    for i in range(st.session_state.n_items):
+        c1, c2, c3 = st.columns([4,1,1])
+        desc = c1.text_input(f"Ítem #{i+1} – Descripción", key=f"desc_{i}")
+        pre  = c2.number_input(f"Precio S/.", min_value=0.0, format="%.2f", key=f"pre_{i}")
+        cnt  = c3.number_input(f"Cant.", min_value=1, step=1, key=f"cnt_{i}")
+        if desc and pre > 0:
             items.append({
-                "description": desc.strip(),
-                "unit_price": price,
-                "quantity": int(qty)
+                "descripcion": desc.strip(),
+                "precio_unitario": pre,
+                "cantidad": int(cnt)
             })
 
-    # Dinámica de gastos (opcional al final)
-    st.markdown("**Gastos asociados (opcional)**")
-    if "n_expenses" not in st.session_state:
-        st.session_state.n_expenses = 0
+    # Gastos asociados
+    st.subheader("Gastos asociados (opcional)")
+    if "n_gastos" not in st.session_state: st.session_state.n_gastos = 0
     if st.button("➕ Añadir gasto"):
-        st.session_state.n_expenses += 1
+        st.session_state.n_gastos += 1
 
-    expenses: List[Dict] = []
-    for j in range(st.session_state.n_expenses):
-        c1, c2 = st.columns([3,1])
-        concept = c1.text_input(f"Gasto #{j+1} – Concepto", key=f"exp_concept_{j}")
-        amount  = c2.number_input(f"S/.", min_value=0.0, format="%.2f", key=f"exp_amt_{j}")
-        if concept and amount > 0:
-            expenses.append({"concept": concept.strip(), "amount": amount})
+    gastos: List[Dict] = []
+    for j in range(st.session_state.n_gastos):
+        d1, d2 = st.columns([3,1])
+        cpto = d1.text_input(f"Gasto #{j+1} – Concepto", key=f"cpto_{j}")
+        mto  = d2.number_input(f"S/.", min_value=0.0, format="%.2f", key=f"mto_{j}")
+        if cpto and mto > 0:
+            gastos.append({"concepto": cpto.strip(), "monto": mto})
 
-    # Botón final
+    # Botón guardar
     if st.button("✅ Guardar Proforma"):
         if not items:
-            st.error("Debes añadir al menos un ítem con descripción y precio.")
+            st.error("Añade al menos un ítem con descripción y precio.")
         else:
-            sale_total = calc_items_total(items)
-            cust_id = cust_map[cust_choice]
+            tot_venta = total_items(items)
+            id_cliente = opts[elegido]
 
-            # Insertar venta
-            sale_resp = supabase.table("sales").insert({
-                "customer_id": cust_id,
-                "total_amount": sale_total
-            }).execute()
-            sale_id = sale_resp.data[0]["id"]
+            # Inserta cabecera
+            v = supabase.table("ventas").insert({
+                "cliente_id": id_cliente,
+                "total_venta": tot_venta
+            }).execute().data[0]
+            venta_id = v["id"]
 
-            # Insertar items
+            # Inserta ítems
             for it in items:
-                supabase.table("sale_items").insert({
-                    "sale_id": sale_id,
+                supabase.table("items_venta").insert({
+                    "venta_id": venta_id,
                     **it
                 }).execute()
 
-            # Insertar gastos
-            for ex in expenses:
-                supabase.table("expenses").insert({
-                    "sale_id": sale_id,
+            # Inserta gastos
+            for ex in gastos:
+                supabase.table("gastos").insert({
+                    "venta_id": venta_id,
                     **ex
                 }).execute()
 
-            st.success(f"Proforma guardada con ID: {sale_id}")
+            st.success(f"Proforma ID: {venta_id} guardada.")
             st.experimental_rerun()
 
-# --- UI: Historial y Detalle ---
-def show_history():
+# — Mostrar historial —
+def mostrar_historial():
     st.header("📚 Historial de Proformas")
-    res = supabase.table("sales") \
-        .select("*, customer:customers(name,phone), sale_items(*), expenses(*)") \
-        .order("issue_date", desc=True) \
+    res = (
+        supabase.table("ventas")
+        .select("*, cliente:clientes(nombre,celular), items_venta(*), gastos(*)")
+        .order("fecha_venta", desc=True)
         .execute()
-    sales = res.data or []
+    )
+    ventas = res.data or []
 
-    if not sales:
-        st.info("Aún no hay proformas registradas.")
+    if not ventas:
+        st.info("No hay proformas registradas.")
         return
 
-    for s in sales:
-        header = f"Proforma {s['id']} — {s['customer']['name']} — S/. {s['total_amount']:.2f}"
-        with st.expander(header):
-            st.write(f"- **Fecha:** {s['issue_date']}")
-            st.write(f"- **Cliente:** {s['customer']['name']} ({s['customer']['phone'] or '—'})")
-            st.markdown("**Servicios / Productos**")
-            for it in s["sale_items"]:
-                st.write(f"> {it['description']} — {it['quantity']} × S/. {it['unit_price']:.2f} = S/. {it['line_total']:.2f}")
-            st.success(f"**Total Venta:** S/. {s['total_amount']:.2f}")
+    for ven in ventas:
+        título = f"ID {ven['id']} — {ven['cliente']['nombre']} — S/. {ven['total_venta']:.2f}"
+        with st.expander(título):
+            st.write(f"**Fecha venta:** {ven['fecha_venta']}")
+            st.write(f"**Cliente:** {ven['cliente']['nombre']} ({ven['cliente']['celular'] or '—'})")
+            st.markdown("**Ítems**")
+            for it in ven["items_venta"]:
+                st.write(f"- {it['descripcion']} x{it['cantidad']} @ S/. {it['precio_unitario']:.2f} = S/. {it['total_linea']:.2f}")
+            st.success(f"Total venta: S/. {ven['total_venta']:.2f}")
 
-            if s["expenses"]:
+            if ven["gastos"]:
                 st.markdown("**Gastos**")
-                for ex in s["expenses"]:
-                    st.write(f"> {ex['concept']} — S/. {ex['amount']:.2f}")
-                total_exp = calc_expenses_total(s["expenses"])
-                st.error(f"**Total Gastos:** S/. {total_exp:.2f}")
-                profit = calc_profit(s["total_amount"], total_exp)
-                st.metric("💰 Utilidad", f"S/. {profit:.2f}")
+                for ex in ven["gastos"]:
+                    st.write(f"- {ex['concepto']}: S/. {ex['monto']:.2f}")
+                tg = total_gastos(ven["gastos"])
+                st.error(f"Total gastos: S/. {tg:.2f}")
+                utl = utilidad(ven["total_venta"], tg)
+                st.metric("Utilidad", f"S/. {utl:.2f}")
             else:
-                st.info("No hay gastos registrados para esta proforma.")
+                st.info("Sin gastos registrados.")
 
-# --- Layout principal ---
-st.set_page_config(page_title="Sistema Contable ProLaser", layout="wide")
-st.title("🧮 Sistema Contable ProLaser")
+# — Layout principal —
+st.set_page_config(page_title="ProLaser: Sistema Contable", layout="wide")
+st.title("🧾 ProLaser – Sistema Contable")
 
-register_customer()
+registrar_cliente()
 st.markdown("---")
-create_sale()
+crear_venta()
 st.markdown("---")
-show_history()
+mostrar_historial()
