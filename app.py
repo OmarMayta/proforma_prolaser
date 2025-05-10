@@ -1,160 +1,189 @@
 import streamlit as st
 from supabase import create_client, Client
-from typing import List, Dict
+from datetime import datetime
 
-# — Conexión a Supabase —
-@st.cache_resource(show_spinner=False)
-def init_supabase() -> Client:
-    url = st.secrets["SUPABASE_URL"]
-    key = st.secrets["SUPABASE_KEY"]
-    return create_client(url, key)
-
-supabase = init_supabase()
-
-# — Funciones contables —
-def total_items(items: List[Dict]) -> float:
-    return sum(it["precio_unitario"] * it["cantidad"] for it in items)
-
-def total_gastos(gastos: List[Dict]) -> float:
-    return sum(g["monto"] for g in gastos)
-
-def utilidad(venta: float, gastos_tot: float) -> float:
-    return venta - gastos_tot
-
-# — Registrar cliente (sin experimental_rerun) —
-def registrar_cliente():
-    st.header("👤 Registrar Cliente")
-    with st.form("form_cliente", clear_on_submit=True):
-        nombre  = st.text_input("Nombre completo")
-        celular = st.text_input("Celular")
-        if st.form_submit_button("Guardar"):
-            if not nombre.strip():
-                st.error("El nombre es obligatorio.")
-            else:
-                supabase.table("clientes").insert({
-                    "nombre": nombre.strip(),
-                    "celular": celular.strip() or None
-                }).execute()
-                st.success(f"Cliente «{nombre}» registrado.")
-
-# — Crear proforma/venta (sin experimental_rerun) —
-def crear_venta():
-    st.header("💼 Nueva Proforma / Venta")
-    # Traer clientes
-    resp = supabase.table("clientes").select("*").order("fecha_creacion", desc=True).execute()
-    clientes = resp.data or []
-    if not clientes:
-        st.warning("Registra al menos un cliente primero.")
-        return
-
-    # Mapa nombre→id
-    opts = {f"{c['nombre']} ({c.get('celular') or '—'})": c["id"] for c in clientes}
-    elegido = st.selectbox("Selecciona Cliente", list(opts.keys()))
-
-    # Ítems de servicio/producto
-    if "n_items" not in st.session_state: st.session_state.n_items = 1
-    if st.button("➕ Añadir ítem"):
-        st.session_state.n_items += 1
-
-    items: List[Dict] = []
-    st.subheader("Detalle de ítems")
-    for i in range(st.session_state.n_items):
-        c1, c2, c3 = st.columns([4,1,1])
-        desc = c1.text_input(f"Ítem #{i+1} – Descripción", key=f"desc_{i}")
-        pre  = c2.number_input(f"Precio S/.", min_value=0.0, format="%.2f", key=f"pre_{i}")
-        cnt  = c3.number_input(f"Cant.", min_value=1, step=1, key=f"cnt_{i}")
-        if desc and pre > 0:
-            items.append({
-                "descripcion": desc.strip(),
-                "precio_unitario": pre,
-                "cantidad": int(cnt)
-            })
-
-    # Gastos asociados
-    st.subheader("Gastos asociados (opcional)")
-    if "n_gastos" not in st.session_state: st.session_state.n_gastos = 0
-    if st.button("➕ Añadir gasto"):
-        st.session_state.n_gastos += 1
-
-    gastos: List[Dict] = []
-    for j in range(st.session_state.n_gastos):
-        d1, d2 = st.columns([3,1])
-        cpto = d1.text_input(f"Gasto #{j+1} – Concepto", key=f"cpto_{j}")
-        mto  = d2.number_input(f"S/.", min_value=0.0, format="%.2f", key=f"mto_{j}")
-        if cpto and mto > 0:
-            gastos.append({"concepto": cpto.strip(), "monto": mto})
-
-    # Botón guardar proforma
-    if st.button("✅ Guardar Proforma"):
-        if not items:
-            st.error("Añade al menos un ítem con descripción y precio.")
-        else:
-            tot_venta = total_items(items)
-            id_cliente = opts[elegido]
-
-            # Inserta cabecera
-            v = supabase.table("ventas").insert({
-                "cliente_id": id_cliente,
-                "total_venta": tot_venta
-            }).execute().data[0]
-            venta_id = v["id"]
-
-            # Inserta ítems
-            for it in items:
-                supabase.table("items_venta").insert({
-                    "venta_id": venta_id,
-                    **it
-                }).execute()
-
-            # Inserta gastos
-            for ex in gastos:
-                supabase.table("gastos").insert({
-                    "venta_id": venta_id,
-                    **ex
-                }).execute()
-
-            st.success(f"Proforma ID: {venta_id} guardada.")
-
-# — Mostrar historial —
-def mostrar_historial():
-    st.header("📚 Historial de Proformas")
-    res = (
-        supabase.table("ventas")
-        .select("*, cliente:clientes(nombre,celular), items_venta(*), gastos(*)")
-        .order("fecha_venta", desc=True)
-        .execute()
-    )
-    ventas = res.data or []
-
-    if not ventas:
-        st.info("No hay proformas registradas.")
-        return
-
-    for ven in ventas:
-        título = f"ID {ven['id']} — {ven['cliente']['nombre']} — S/. {ven['total_venta']:.2f}"
-        with st.expander(título):
-            st.write(f"**Fecha venta:** {ven['fecha_venta']}")
-            st.write(f"**Cliente:** {ven['cliente']['nombre']} ({ven['cliente']['celular'] or '—'})")
-            st.markdown("**Ítems**")
-            for it in ven["items_venta"]:
-                st.write(f"- {it['descripcion']} x{it['cantidad']} @ S/. {it['precio_unitario']:.2f} = S/. {it['total_linea']:.2f}")
-            st.success(f"Total venta: S/. {ven['total_venta']:.2f}")
-
-            if ven["gastos"]:
-                st.markdown("**Gastos**")
-                for ex in ven["gastos"]:
-                    st.write(f"- {ex['concepto']}: S/. {ex['monto']:.2f}")
-                tg = total_gastos(ven["gastos"])
-                st.error(f"Total gastos: S/. {tg:.2f}")
-                utl = utilidad(ven["total_venta"], tg)
-                st.metric("Utilidad", f"S/. {utl:.2f}")
-            else:
-                st.info("Sin gastos registrados.")
-
-# — Layout principal —
+# Configuración inicial
 st.set_page_config(page_title="ProLaser: Sistema Contable", layout="wide")
 st.title("🧾 ProLaser – Sistema Contable")
 
+# Conexión a Supabase
+@st.cache_resource
+def init_supabase():
+    return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+
+supabase = init_supabase()
+
+# Funciones auxiliares
+def validar_celular(numero):
+    return numero.isdigit() and len(numero) == 9
+
+# Componente para registrar clientes
+def registrar_cliente():
+    with st.expander("👤 Registrar Cliente", expanded=True):
+        with st.form("cliente_form", clear_on_submit=True):
+            cols = st.columns([2,1,1,2])
+            nombre = cols[0].text_input("Nombre completo*")
+            dni = cols[1].text_input("DNI (opcional)")
+            ruc = cols[2].text_input("RUC (opcional)")
+            celular = cols[3].text_input("Celular*")
+            
+            distrito = st.selectbox("Distrito/Provincia", ["Lima", "Ate", "Surco", "Otro"])
+            direccion = st.text_input("Dirección")
+            instalacion = st.checkbox("Requiere servicio de instalación")
+            
+            if st.form_submit_button("Guardar Cliente"):
+                if not nombre or not celular:
+                    st.error("Nombre y celular son obligatorios")
+                elif not validar_celular(celular):
+                    st.error("Celular debe tener 9 dígitos")
+                else:
+                    cliente_data = {
+                        "nombre": nombre.strip(),
+                        "dni": dni.strip() if dni else None,
+                        "ruc": ruc.strip() if ruc else None,
+                        "celular": celular.strip(),
+                        "distrito": distrito,
+                        "direccion": direccion.strip(),
+                        "servicio_instalacion": instalacion
+                    }
+                    supabase.table("clientes").insert(cliente_data).execute()
+                    st.success("Cliente registrado exitosamente!")
+
+# Componente para crear ventas
+def crear_venta():
+    with st.expander("💼 Nueva Operación", expanded=True):
+        # Selección de cliente
+        clientes = supabase.table("clientes").select("*").execute().data
+        if not clientes:
+            st.warning("Registra al menos un cliente primero")
+            return
+            
+        cliente_opts = {f"{c['nombre']} | {c['celular']}": c['id'] for c in clientes}
+        cliente_selec = st.selectbox("Seleccionar Cliente", options=list(cliente_opts.keys()))
+        
+        # Tipo de documento
+        tipo_doc = st.radio("Tipo de documento", ["proforma", "contrato"], horizontal=True)
+        
+        # Items de venta
+        st.subheader("📦 Productos/Servicios")
+        items = []
+        if 'items' not in st.session_state:
+            st.session_state.items = [{"desc": "", "precio": 0.0, "cantidad": 1}]
+        
+        for i, item in enumerate(st.session_state.items):
+            cols = st.columns([4,1,1,2])
+            with cols[0]:
+                desc = st.text_input(f"Descripción {i+1}", key=f"desc_{i}")
+            with cols[1]:
+                precio = st.number_input("Precio Unit.", min_value=0.0, key=f"precio_{i}")
+            with cols[2]:
+                cantidad = st.number_input("Cant.", min_value=1, key=f"cant_{i}")
+            with cols[3]:
+                st.write(f"Subtotal: S/{(precio * cantidad):.2f}")
+            
+            st.session_state.items[i] = {
+                "desc": desc,
+                "precio": precio,
+                "cantidad": cantidad
+            }
+        
+        c1, c2 = st.columns([1,4])
+        if c1.button("➕ Añadir Ítem"):
+            st.session_state.items.append({"desc": "", "precio": 0.0, "cantidad": 1})
+        
+        # Calculos totales
+        total_venta = sum(item['precio'] * item['cantidad'] for item in st.session_state.items)
+        
+        # Sección de pagos
+        st.subheader("💰 Gestión de Pagos")
+        adelanto = st.number_input("Adelanto Recibido", min_value=0.0, max_value=total_venta, value=0.0)
+        saldo = total_venta - adelanto
+        st.write(f"**Saldo Pendiente:** S/ {saldo:.2f}")
+        
+        # Fecha de entrega
+        fecha_entrega = st.date_input("Fecha Estimada de Entrega")
+        
+        if st.button("💾 Guardar Operación"):
+            # Guardar venta principal
+            venta_data = {
+                "cliente_id": cliente_opts[cliente_selec],
+                "tipo_documento": tipo_doc,
+                "total_venta": total_venta,
+                "adelanto": adelanto,
+                "fecha_entrega": fecha_entrega.isoformat() if fecha_entrega else None
+            }
+            venta = supabase.table("ventas").insert(venta_data).execute().data[0]
+            
+            # Guardar items
+            for item in st.session_state.items:
+                supabase.table("items_venta").insert({
+                    "venta_id": venta['id'],
+                    "descripcion": item['desc'],
+                    "precio_unitario": item['precio'],
+                    "cantidad": item['cantidad']
+                }).execute()
+            
+            st.success(f"Operación {tipo_doc.capitalize()} #{venta['id']} guardada!")
+            st.session_state.items = []  # Reset items
+
+# Historial y gestión de gastos
+def mostrar_historial():
+    with st.expander("📚 Historial y Gestión", expanded=True):
+        ventas = supabase.table("ventas").select("*, cliente:clientes(*), items_venta(*), gastos(*)").execute().data
+        
+        # Estadísticas rápidas
+        st.subheader("📊 Estado Financiero")
+        col1, col2, col3 = st.columns(3)
+        total_ventas = sum(v['total_venta'] for v in ventas)
+        total_adelantos = sum(v['adelanto'] for v in ventas)
+        col1.metric("Ventas Totales", f"S/ {total_ventas:.2f}")
+        col2.metric("En Caja", f"S/ {total_adelantos:.2f}")
+        col3.metric("Por Cobrar", f"S/ {total_ventas - total_adelantos:.2f}")
+        
+        # Detalle de operaciones
+        st.subheader("📋 Detalle de Operaciones")
+        for venta in ventas:
+            with st.container():
+                cols = st.columns([1,3,2,2])
+                cols[0].write(f"**ID:** {venta['id']}")
+                cols[1].write(f"**Cliente:** {venta['cliente']['nombre']}")
+                cols[2].write(f"**Total:** S/ {venta['total_venta']:.2f}")
+                cols[3].write(f"**Saldo:** S/ {venta['saldo']:.2f}")
+                
+                # Sección editable
+                with st.expander("Ver detalles completos"):
+                    # Editar datos básicos
+                    with st.form(f"editar_venta_{venta['id']}"):
+                        nuevo_adelanto = st.number_input("Modificar Adelanto", value=float(venta['adelanto']), 
+                                                       max_value=float(venta['total_venta']))
+                        if st.form_submit_button("Actualizar Adelanto"):
+                            supabase.table("ventas").update({"adelanto": nuevo_adelanto})\
+                                   .eq("id", venta['id']).execute()
+                            st.rerun()
+                    
+                    # Gestión de gastos
+                    st.write("**Gastos Asociados:**")
+                    gastos = venta['gastos']
+                    for gasto in gastos:
+                        cols = st.columns([3,1,1])
+                        cols[0].write(gasto['concepto'])
+                        cols[1].write(f"S/ {gasto['monto']:.2f}")
+                        if cols[2].button("🗑️", key=f"del_gasto_{gasto['id']}"):
+                            supabase.table("gastos").delete().eq("id", gasto['id']).execute()
+                            st.rerun()
+                    
+                    with st.form(f"nuevo_gasto_{venta['id']}"):
+                        concepto = st.text_input("Concepto del Gasto")
+                        monto = st.number_input("Monto", min_value=0.0)
+                        if st.form_submit_button("➕ Añadir Gasto"):
+                            supabase.table("gastos").insert({
+                                "venta_id": venta['id'],
+                                "concepto": concepto,
+                                "monto": monto
+                            }).execute()
+                            st.rerun()
+
+# Ejecutar la aplicación
 registrar_cliente()
 st.markdown("---")
 crear_venta()
